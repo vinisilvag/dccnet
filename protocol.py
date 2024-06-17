@@ -18,45 +18,43 @@ class DCCNET:
 
         return checksum
 
-    def encode(self, data: bytes, id: int) -> bytes:
-        #      32       32       16        16       8     8      length
-        # 0        32       64        80        96    104   112   112+length
-        # +---/----+---/----+---------+---------+-----+-----+------ ... ---+
-        # |  SYNC  |  SYNC  | chksum  | length  | ID  |flags| DATA         |
-        # +---/----+---/----+---------+---------+-----+-----+------ ... ---+
+    def encode(self, data: bytes, id: int, flags: int) -> tuple[bytes, int]:
+        # print("data: ", data)
+        # print("length: ", len(data))
 
-        print("data: ", data)
-        print("length: ", len(data))
+        synchronization = struct.pack("!II", self.sync, self.sync)
+        length = struct.pack("!H", len(data))
+        frame_id = struct.pack("!H", id)
+        frame_flags = struct.pack("!B", flags)
 
-        double_sync = struct.pack("!II", self.sync, self.sync)
-        payload_length = struct.pack("!H", len(data))
-        frame_id = struct.pack("B", id)
-        flags = struct.pack("B", 0)
-
-        frame = double_sync + b"\x00\x00" + payload_length + frame_id + flags + data
+        frame = synchronization + b"\x00\x00" + length + frame_id + frame_flags + data
         print("frame without chksum defined: ", frame)
 
         chksum = self.checksum(frame)
-        print("chksum: ", chksum)
-        print("chksum hex: ", hex(chksum))
+        # print("chksum: ", chksum)
+        # print("chksum hex: ", hex(chksum))
         checksum = struct.pack("!H", chksum)
 
-        frame = double_sync + checksum + payload_length + frame_id + flags + data
+        frame = synchronization + checksum + length + frame_id + frame_flags + data
         print("frame with chksum defined", frame)
 
-        return frame
+        return frame, chksum
 
     def encode_ack(self, id: int):
-        double_sync = struct.pack("!II", self.sync, self.sync)
-        payload_length = struct.pack("!H", 0)
-        frame_id = struct.pack("B", id)
-        flags = struct.pack("B", 0x80)
+        synchronization = struct.pack("!II", self.sync, self.sync)
+        length = struct.pack("!H", 0)
+        frame_id = struct.pack("!H", id)
+        frame_flags = struct.pack("!B", 0x80)
 
-        #                        checksum improvisado
-        frame = double_sync + b"\x00\x00" + payload_length + frame_id + flags
-        print(frame)
+        frame = synchronization + b"\x00\x00" + length + frame_id + frame_flags
+        print("frame without chksum defined: ", frame)
 
-        return frame
+        chksum = self.checksum(frame)
+        # print("chksum: ", chksum)
+        # print("chksum hex: ", hex(chksum))
+        checksum = struct.pack("!H", chksum)
 
-    def decode(self, packet: bytes):
-        pass
+        frame = synchronization + checksum + length + frame_id + frame_flags
+        print("frame with chksum defined", frame)
+
+        return frame, chksum
