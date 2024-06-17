@@ -23,19 +23,20 @@ class DCCNET:
         # print("length: ", len(data))
 
         frame = struct.pack(
-            f"!IIHHHB{len(data)}s", self.sync, self.sync, 0, len(data), id, flags, data
+            f">IIHHHB{len(data)}s", self.sync, self.sync, 0, len(data), id, flags, data
         )
         print("frame without chksum defined: ", frame)
 
         chksum = self.checksum(frame)
         print("chksum: ", chksum)
         print("chksum hex: ", hex(chksum))
+        checksum = struct.pack("<H", chksum)
 
         frame = struct.pack(
-            f">IIHHHB{len(data)}s",
+            f">II2sHHB{len(data)}s",
             self.sync,
             self.sync,
-            chksum,
+            checksum,
             len(data),
             id,
             flags,

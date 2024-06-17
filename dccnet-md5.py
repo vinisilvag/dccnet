@@ -54,6 +54,7 @@ def start_client(ip: str, port: int) -> None:
 
     is_authenticated = False
     all_data_received = False
+    last_frame_sent = None
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((ip, port))
@@ -62,6 +63,7 @@ def start_client(ip: str, port: int) -> None:
         while not is_authenticated:
             frame, _ = dccnet.encode(GAS.encode(), id, 0x00)
             s.send(frame)
+            last_frame_sent = frame
 
             try:
                 (checksum_recv, length_recv, id_recv, flags_recv, data_recv) = receive(
@@ -76,10 +78,36 @@ def start_client(ip: str, port: int) -> None:
                     print("content:", data_recv.decode())
                     print("terminating...")
                     sys.exit(1)
+                else:
+                    print("received a data packet")
+                    print("content:", data_recv.decode())
             except socket.timeout:
                 s.send(frame)
+                last_frame_sent = frame
 
         while not all_data_received:
+            try:
+                (checksum_recv, length_recv, id_recv, flags_recv, data_recv) = receive(
+                    s
+                )
+                if is_ack_frame(length_recv, flags_recv):
+                    print("received an ACK for data")
+                    id = (id + 1) % 2
+                elif is_reset_frame(id_recv, flags_recv):
+                    print("received an RESET frame")
+                    print("content:", data_recv.decode())
+                    print("terminating...")
+                    sys.exit(1)
+                else:
+                    print("received a data packet")
+                    print("content:", data_recv)
+
+                    # check stuff
+                    # send MD5 message
+            except socket.timeout:
+                if frame is not None:
+                    s.send(last_frame_sent)
+
             break
 
 
