@@ -10,3 +10,9 @@ server:
 	
 client:
 	python3 dccnet-xfer.py -c ${HOST}:${PORT} ${CLIENT_INPUT} ${CLIENT_OUTPUT}
+
+md5:
+	python3 dccnet-md5.py rubick.snes.2advanced.dev:51563
+
+debug:
+	python3 debug.py
