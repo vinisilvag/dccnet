@@ -13,19 +13,60 @@ def is_ack_frame(id, id_recv, length, flags):
 
 
 def receive_frame(s):
-    sync1 = s.recv(4)
-    sync2 = s.recv(4)
-    sync1 = hex(struct.unpack("!I", sync1)[0])
-    sync2 = hex(struct.unpack("!I", sync2)[0])
+    sync_pattern = b'\xDC\xC0\x23\xC2'
+    sync_length = 4  # 4 bytes
 
-    print(sync1)
-    print(sync2)
+    def read_next_byte():
+        byte = s.recv(1)
+        if not byte:
+            return None
+        return byte
 
-    while sync1 != hex(0xDCC023C2) and sync2 != hex(0xDCC023C2):
-        print("sync diff")
-        sys.exit(1)
+    # Inicializar a janela de 8 bytes (64 bits)
+    window = bytearray()
+    for _ in range(8):
+        byte = read_next_byte()
+        if byte is None:
+            return None
+        window.extend(byte)
 
-    print("valid sync")
+    while True:
+        # Extrair os primeiros 4 bytes e os últimos 4 bytes da janela
+        sync1 = window[:sync_length]
+        sync2 = window[sync_length:sync_length*2]
+
+        print("\n[SYNCHRONIZING] Reading sync prefix")
+        print(f"sync1: {sync1.hex()}, sync2: {sync2.hex()}")
+
+        if sync1 == sync_pattern and sync2 == sync_pattern:
+            print("[SYNCHRONIZING] Valid sync\n")
+            break
+        else:
+            print("sync diff")
+
+            # Deslizar a janela para a esquerda em 1 byte
+            window.pop(0)
+
+            # Ler o próximo byte
+            byte = read_next_byte()
+            if byte is None:
+                return None
+            window.extend(byte)
+
+    # def receive_frame(s):
+    #     sync1 = s.recv(4)
+    #     sync2 = s.recv(4)
+    #     sync1 = hex(struct.unpack("!I", sync1)[0])
+    #     sync2 = hex(struct.unpack("!I", sync2)[0])
+
+    #     print(sync1)
+    #     print(sync2)
+
+    #     while sync1 != hex(0xDCC023C2) and sync2 != hex(0xDCC023C2):
+    #         print("sync diff")
+    #         sys.exit(1)
+
+    #     print("valid sync")
 
     checksum = struct.unpack("!H", s.recv(2))[0]
     length = struct.unpack("!H", s.recv(2))[0]
