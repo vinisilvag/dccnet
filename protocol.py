@@ -25,11 +25,11 @@ class DCCNET:
         frame = struct.pack(
             f">IIHHHB{len(data)}s", self.sync, self.sync, 0, len(data), id, flags, data
         )
-        print("frame without chksum defined: ", frame)
+        # print("frame without chksum defined: ", frame)
 
         chksum = self.checksum(frame)
-        print("chksum: ", chksum)
-        print("chksum hex: ", hex(chksum))
+        # print("chksum: ", chksum)
+        # print("chksum hex: ", hex(chksum))
         checksum = struct.pack("<H", chksum)
 
         frame = struct.pack(
@@ -42,26 +42,10 @@ class DCCNET:
             flags,
             data,
         )
-        print("frame with chksum defined", frame)
+        # print("frame with chksum defined", frame)
 
         return frame, chksum
 
     def encode_ack(self, id: int):
-        synchronization = struct.pack("!II", self.sync, self.sync)
-        length = struct.pack("!H", 0)
-        frame_id = struct.pack("!H", id)
-        frame_flags = struct.pack("!B", 0x80)
-
-        frame = synchronization + b"\x00\x00" + length + frame_id + frame_flags
-        # print("frame without chksum defined: ", frame)
-
-        chksum = self.checksum(frame)
-        # print("chksum: ", chksum)
-        # print("chksum hex: ", hex(chksum))
-        checksum = struct.pack("!H", chksum)
-
-        frame = synchronization + checksum + length + frame_id + frame_flags
-        print("frame with chksum defined", frame)
-        print()
-
+        frame, chksum = self.encode(b"", id, 0x80)
         return frame, chksum
