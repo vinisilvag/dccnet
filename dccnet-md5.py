@@ -1,3 +1,5 @@
+import hashlib
+import logging
 import socket
 import struct
 import sys
@@ -10,158 +12,235 @@ GAS = "2021421869  :44:87407f792f59b7dde2bf51a0ae7216cf8c246a7169b52ac336bbf1669
 dccnet = DCCNET()
 
 
-def is_ack_frame(length_recv, flags_recv):
-    return length_recv == 0 and flags_recv & 0x80
+# def start_client(ip: str, port: int) -> None:
+#     id = 0
+#
+#     is_authenticated = False
+#     all_data_received = False
+#     last_frame_sent = None
+#
+#     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+#         s.connect((ip, port))
+#         # s.settimeout(1)
+#
+#         while not is_authenticated:
+#             frame, _ = dccnet.encode(GAS.encode(), id, 0x00)
+#             s.send(frame)
+#             last_frame_sent = frame
+#
+#             try:
+#                 (checksum_recv, length_recv, id_recv, flags_recv, data_recv) = receive(
+#                     s
+#                 )
+#                 if is_ack_frame(length_recv, flags_recv):
+#                     print("received an ACK for authentication")
+#                     is_authenticated = True
+#                     id = (id + 1) % 2
+#                 elif is_reset_frame(id_recv, flags_recv):
+#                     print("received an RESET frame")
+#                     print("content:", data_recv.decode())
+#                     print("terminating...")
+#                     sys.exit(1)
+#                 else:
+#                     print("received a data packet")
+#                     print("content:", data_recv.decode())
+#             except socket.timeout:
+#                 s.send(frame)
+#                 last_frame_sent = frame
+#
+#         while not all_data_received:
+#             try:
+#                 (checksum_recv, length_recv, id_recv, flags_recv, data_recv) = receive(
+#                     s
+#                 )
+#                 if is_ack_frame(length_recv, flags_recv):
+#                     print("received an ACK for data")
+#                     id = (id + 1) % 2
+#                 elif is_reset_frame(id_recv, flags_recv):
+#                     print("received an RESET frame")
+#                     print("content:", data_recv.decode())
+#                     print("terminating...")
+#                     sys.exit(1)
+#                 else:
+#                     print("received a data packet")
+#                     print("content:", data_recv)
+#
+#                     # check stuff
+#                     # send MD5 message
+#             except socket.timeout:
+#                 if frame is not None:
+#                     s.send(last_frame_sent)
+#
+#             break
 
 
-def is_reset_frame(id_recv, flags_recv):
-    return hex(id_recv) == hex(0xFFFF) and flags_recv & 0x20
+def reconstruct_frame(length_recv, id_recv, flags_recv, data_recv):
+    frame = struct.pack(
+        f">IIHHHB{length_recv}s",
+        dccnet.sync,
+        dccnet.sync,
+        0,
+        length_recv,
+        id_recv,
+        flags_recv,
+        data_recv,
+    )
 
-def receive(s):
-    sync_pattern = b'\xDC\xC0\x23\xC2'
-    sync_length = 4  # 4 bytes
+    chksum = dccnet.checksum(frame)
+    checksum = struct.pack("<H", chksum)
 
-    def read_next_byte():
-        byte = s.recv(1)
-        if not byte:
-            return None
-        return byte
+    frame = struct.pack(
+        f">II2sHHB{length_recv}s",
+        dccnet.sync,
+        dccnet.sync,
+        checksum,
+        length_recv,
+        id_recv,
+        flags_recv,
+        data_recv,
+    )
 
-    # Inicializar a janela de 8 bytes (64 bits)
-    window = bytearray()
-    for _ in range(8):
-        byte = read_next_byte()
-        if byte is None:
-            return None
-        window.extend(byte)
+    return frame, chksum
+
+
+def checksum_match(checksum_calc, checksum_recv):
+    return checksum_calc == checksum_recv
+
+
+def dissect(frame):
+    print(frame)
+    print(struct.unpack("!IIHHHB", frame))
+
+    # return {
+    #     "id": id,
+    #     "flags": flags,
+    #     "checksum": checksum,
+    #     "length": length,
+    #     "data": data,
+    # }
+
+
+def communicate(conn, gas):
+    is_authenticated = False
+    end_received = False
+
+    send_id = 0
+
+    gas += "\n"
 
     while True:
-        # Extrair os primeiros 4 bytes e os últimos 4 bytes da janela
-        sync1 = window[:sync_length]
-        sync2 = window[sync_length:sync_length*2]
-
-        print("\n[SYNCHRONIZING] Reading sync prefix")
-        print(f"sync1: {sync1.hex()}, sync2: {sync2.hex()}")
-
-        if sync1 == sync_pattern and sync2 == sync_pattern:
-            print("[SYNCHRONIZING] Valid sync\n")
-            break
+        if not is_authenticated:
+            logging.info("send authentication frame")
+            auth_frame, _ = dccnet.encode(gas.encode(), send_id, 0x00)
+            dccnet.send_frame(conn, auth_frame)
         else:
-            print("sync diff")
+            logging.info("send hash message")
 
-            # Deslizar a janela para a esquerda em 1 byte
-            window.pop(0)
+        try:
+            recv = dccnet.receive_frame(conn)
+            logging.info(f"frame received: {recv}")
+        except socket.timeout:
+            logging.info("timeout")
+            continue
 
-            # Ler o próximo byte
-            byte = read_next_byte()
-            if byte is None:
-                return None
-            window.extend(byte)
-
-    # def receive(s):
-    #     sync1 = s.recv(4)
-    #     sync2 = s.recv(4)
-    #     sync1 = hex(struct.unpack("!I", sync1)[0])
-    #     sync2 = hex(struct.unpack("!I", sync2)[0])
-
-    #     print("\n[SYNCHRONIZING] Reading sync prefix")
-    #     print(sync1)
-    #     print(sync2)
-
-    #     while sync1 != hex(0xDCC023C2) and sync2 != hex(0xDCC023C2):
-    #         print("sync diff")
-    #         sys.exit(1)
-
-    #     print("[SYNCHRONIZING] Valid sync\n")
-
-    checksum = struct.unpack("!H", s.recv(2))[0]
-    length = struct.unpack("!H", s.recv(2))[0]
-    id = struct.unpack("!H", s.recv(2))[0]
-    flags = struct.unpack("!B", s.recv(1))[0]
-    data = s.recv(length)
-
-    print("[RECEIVED] packet content:")
-    print("checksum:", hex(checksum))
-    print("length:", length)
-    print("id:", id)
-    print("flags:", hex(flags), end="\n\n")
-
-    return checksum, length, id, flags, data
-
-
-def start_client(ip: str, port: int) -> None:
-    id = 0
-
-    is_authenticated = False
-    all_data_received = False
-    last_frame_sent = None
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect((ip, port))
-        # s.settimeout(1)
-
-        while not is_authenticated:
-            frame, _ = dccnet.encode(GAS.encode(), id, 0x00)
-            s.send(frame)
-            last_frame_sent = frame
-
-            try:
-                (checksum_recv, length_recv, id_recv, flags_recv, data_recv) = receive(
-                    s
-                )
-                if is_ack_frame(length_recv, flags_recv):
-                    print("received an ACK for authentication")
+        if dccnet.is_ack_frame(recv["flags"]):
+            logging.info("ACK received")
+            if recv["id"] == send_id:
+                if not is_authenticated:
                     is_authenticated = True
-                    id = (id + 1) % 2
-                elif is_reset_frame(id_recv, flags_recv):
-                    print("received an RESET frame")
-                    print("content:", data_recv.decode())
-                    print("terminating...")
-                    sys.exit(1)
-                else:
-                    print("received a data packet")
-                    print("content:", data_recv.decode())
-            except socket.timeout:
-                s.send(frame)
-                last_frame_sent = frame
 
-        while not all_data_received:
-            try:
-                (checksum_recv, length_recv, id_recv, flags_recv, data_recv) = receive(
-                    s
-                )
-                if is_ack_frame(length_recv, flags_recv):
-                    print("received an ACK for data")
-                    id = (id + 1) % 2
-                elif is_reset_frame(id_recv, flags_recv):
-                    print("received an RESET frame")
-                    print("content:", data_recv.decode())
-                    print("terminating...")
-                    sys.exit(1)
-                else:
-                    print("received a data packet")
-                    print("content:", data_recv)
-
-                    # check stuff
-                    # send MD5 message
-            except socket.timeout:
-                if frame is not None:
-                    s.send(last_frame_sent)
-
-            break
+            send_id = (send_id + 1) % 2
+        elif dccnet.is_reset_frame(recv["flags"]):
+            logging.info("received an RESET frame")
+            logging.info("content:", recv["data"].decode())
+            sys.exit(1)
+        else:
+            print("other stuff")
+    # auth_frame, _ = dccnet.encode(gas.encode(), id, 0x00)
+    # dccnet.send_frame(conn, auth_frame)
+    # logging.info("authentication frame sent")
+    #
+    # while not is_authenticated:
+    #     try:
+    #         recv = dccnet.receive_frame(conn)
+    #         if dccnet.is_ack_frame(recv["length"], recv["flags"]):
+    #             logging.info("ACK received for authentication")
+    #             logging.info("authentication finished")
+    #             is_authenticated = True
+    #         elif dccnet.is_reset_frame(recv["id"], recv["flags"]):
+    #             logging.info("received an RESET frame during authentication")
+    #             logging.info("content:", recv["data"].decode())
+    #             sys.exit(1)
+    #     except socket.timeout:
+    #         dccnet.send_frame(conn, auth_frame)
+    #
+    # logging.info("now exchanging data")
+    #
+    # while not end_received:
+    #     try:
+    #         recv = dccnet.receive_frame(conn)
+    #         logging.info(f"frame received: {recv}")
+    #         if dccnet.is_ack_frame(recv["length"], recv["flags"]):
+    #             logging.info("ACK received for data")
+    #             print("o que fazer?")
+    #         elif dccnet.is_reset_frame(recv["id"], recv["flags"]):
+    #             logging.info("received an RESET frame during data exchanging")
+    #             logging.info(f"content: {recv['data'].decode()}")
+    #             sys.exit(1)
+    #         else:
+    #             frame_calc, checksum_calc = reconstruct_frame(
+    #                 recv["length"], recv["id"], recv["flags"], recv["data"]
+    #             )
+    #             if checksum_match(checksum_calc, recv["checksum"]):
+    #                 logging.info("data frame received and checksum match")
+    #
+    #                 logging.info("sending ACK")
+    #                 ack, _ = dccnet.encode_ack(id)
+    #                 dccnet.send_frame(conn, ack)
+    #                 logging.info("ack sent")
+    #
+    #                 # if recv["id"] != alguma_coisa:
+    #                 # else:
+    #                 # message = recv["data"].decode().split("\n")[0]
+    #                 # md5 = hashlib.md5(message.encode())
+    #                 # digest = md5.hexdigest()
+    #                 # frame, _ = dccnet.encode(digest.encode(), 0, 0x00)
+    #                 # dccnet.send_frame(conn, frame)
+    #                 # logging.info(f"frame sent: {frame}")
+    #     except socket.timeout:
+    #         logging.info("timeout")
+    #         ack, _ = dccnet.encode_ack(id)
+    #         dccnet.send_frame(conn, ack)
 
 
 def main():
-    if len(sys.argv) != 2:
+    if len(sys.argv) != 3:
         print(
             "Invalid argument number.",
-            "\nCorrect usage is: python3 dccnet-md5.py -c <IP>:<PORT>",
+            "\nCorrect usage is: python3 dccnet-md5.py -c <IP>:<PORT> <GAS>",
         )
         sys.exit(1)
 
-    ip, port = sys.argv[1].split(":")
+    logging.basicConfig(
+        level=logging.INFO, datefmt="%H:%M:%S", format="%(asctime)s: %(message)s"
+    )
+
+    host, port = sys.argv[1].split(":")
+    gas = sys.argv[2]
     port = int(port)
-    start_client(ip, port)
+
+    (ip_address, family) = dccnet.resolve_connection(host, port)
+    connection = (ip_address, port)
+
+    conn = socket.socket(family, socket.SOCK_STREAM)
+    conn.connect(connection)
+    conn.settimeout(1)
+
+    logging.info(f"connected with server {connection}")
+
+    communicate(conn, gas)
+
+    conn.close()
 
 
 if __name__ == "__main__":
