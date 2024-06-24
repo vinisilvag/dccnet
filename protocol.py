@@ -10,7 +10,7 @@ from typing import Union #--> Garante que a variável seja de algum dos tipos in
 class DCCNET:
     def __init__(self, type, host, port, inputFile, outputFile) -> None:
         ''' 
-        Cria um objeto DCCNET a partir de um frame recebido pelo servidor ou cliente.
+        Cria um objeto DCCNET para ser usado pelo servidor ou cliente.
         Para facilitar, os dados são trabalhados em bytes, não em bits.
         '''
 
