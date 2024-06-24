@@ -38,6 +38,9 @@ class DCCNET:
     def is_ack_frame(self, flags_recv):
         return flags_recv & 0x80
 
+    def is_end_frame(self, flags_recv):
+        return flags_recv & 0x40
+
     def is_reset_frame(self, flags_recv):
         return flags_recv & 0x20
 
