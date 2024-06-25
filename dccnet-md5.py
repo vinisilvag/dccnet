@@ -12,6 +12,8 @@ dccnet = DCCNET()
 
 def communicate(conn, gas):
     send_id = 0
+    last_id = 1
+    last_chksum = -1
 
     authenticated = False
     all_data_received = False
@@ -28,6 +30,9 @@ def communicate(conn, gas):
             logging.info(f"frame received: {recv}")
         except socket.timeout:
             continue
+
+        last_id = recv["id"]
+        last_chksum = recv["checksum"]
 
         if dccnet.is_ack_frame(recv["flags"]):
             logging.info("ACK for authentication received")
@@ -50,11 +55,20 @@ def communicate(conn, gas):
             logging.info("terminating...")
             sys.exit(1)
 
+        # quadro duplicado, reenviando o ACK
+        if recv["id"] == last_id and recv["checksum"] == last_chksum:
+            ack, _ = dccnet.encode_ack(last_id)
+            dccnet.send_frame(conn, ack)
+            continue
+
         # confirma o frame de dados
         logging.info("data frame, sending ack")
         ack, _ = dccnet.encode_ack(recv["id"])
         dccnet.send_frame(conn, ack)
         logging.info(f"ACK sent: {ack}")
+
+        last_id = recv["id"]
+        last_chksum = recv["checksum"]
 
         # END flag setada, finaliza o recebimento/envio de dados
         if dccnet.is_end_frame(recv["flags"]):
@@ -94,7 +108,8 @@ def communicate(conn, gas):
                         logging.info("content:", recv["data"].decode())
                         logging.info("terminating...")
                         sys.exit(1)
-            else:  # mensagem comum recebida
+            else:
+                # mensagem comum recebida
                 # itera pelas possíveis mensagens, envia e aguarda
                 # confirmação de cada uma delas
                 for m in message.split("\n"):
