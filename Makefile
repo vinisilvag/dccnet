@@ -1,5 +1,5 @@
 HOST=127.0.1.1
-PORT=6543
+PORT=6544
 SERVER_INPUT="server-input.txt"
 SERVER_OUTPUT="server-output.txt"
 CLIENT_INPUT="client-input.txt"

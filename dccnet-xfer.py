@@ -34,19 +34,6 @@ def setup_server(host: str, port: int, input: str, output: str) -> None:
     logging.info(f"connected with {addr}")
 
     while (not all_data_sent) or (not all_data_received):
-        if not all_data_sent:
-            if payload == b"":
-                if not all_data_sent:
-                    all_data_sent = True
-            else:
-                flags = 0x00
-                if next_payload == b"":
-                    flags |= 0x40
-
-                frame, _ = dccnet.encode(payload, send_id, flags)
-                dccnet.send_frame(conn, frame)
-                logging.info(f"frame sent: {frame}")
-
         try:
             recv = dccnet.receive_frame(conn)
             logging.info(f"frame received: {recv}")
@@ -55,9 +42,10 @@ def setup_server(host: str, port: int, input: str, output: str) -> None:
 
         if dccnet.is_ack_frame(recv["flags"]):
             logging.info("ACK frame")
-            send_id = (send_id + 1) % 2
-            payload = next_payload
-            next_payload = input_file.read(MAX_DATA_LENGTH)
+            if recv["id"] == send_id:
+                send_id = (send_id + 1) % 2
+                payload = next_payload
+                next_payload = input_file.read(MAX_DATA_LENGTH)
         else:
             if recv["id"] == last_id and recv["checksum"] == last_chksum:
                 logging.info("duplicated frame, resending ACK")
@@ -77,6 +65,21 @@ def setup_server(host: str, port: int, input: str, output: str) -> None:
                 logging.info("sending ACK")
                 ack, _ = dccnet.encode_ack(recv["id"])
                 dccnet.send_frame(conn, ack)
+
+                if not all_data_sent:
+                    if payload == b"":
+                        if not all_data_sent:
+                            all_data_sent = True
+                            logging.info("all data sent")
+                    else:
+                        flags = 0x00
+                        if next_payload == b"":
+                            flags |= 0x40
+                            logging.info("last frame is about to be sent")
+
+                        frame, _ = dccnet.encode(payload, send_id, flags)
+                        dccnet.send_frame(conn, frame)
+                        logging.info(f"frame sent: {frame}")
 
     logging.info("closing input file")
     input_file.close()
@@ -100,13 +103,15 @@ def setup_client(ip: str, port: int, input: str, output: str) -> None:
     payload = input_file.read(MAX_DATA_LENGTH)
     next_payload = input_file.read(MAX_DATA_LENGTH)
 
+    turn_to_send = True
+
     connection = (ip, port)
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect(connection)
     s.settimeout(1)
 
     while (not all_data_sent) or (not all_data_received):
-        if not all_data_sent:
+        if (not all_data_sent) and (turn_to_send):
             if payload == b"":
                 if not all_data_sent:
                     all_data_sent = True
@@ -128,10 +133,12 @@ def setup_client(ip: str, port: int, input: str, output: str) -> None:
             continue
 
         if dccnet.is_ack_frame(recv["flags"]):
-            logging.info("ACK frame")
-            send_id = (send_id + 1) % 2
-            payload = next_payload
-            next_payload = input_file.read(MAX_DATA_LENGTH)
+            if recv["id"] == send_id:
+                logging.info("ACK frame")
+                send_id = (send_id + 1) % 2
+                payload = next_payload
+                next_payload = input_file.read(MAX_DATA_LENGTH)
+                turn_to_send = False
         else:
             if recv["id"] == last_id and recv["checksum"] == last_chksum:
                 logging.info("duplicated frame, resending")
@@ -151,6 +158,8 @@ def setup_client(ip: str, port: int, input: str, output: str) -> None:
                 logging.info("sending ACK")
                 ack, _ = dccnet.encode_ack(recv["id"])
                 dccnet.send_frame(s, ack)
+
+                turn_to_send = True
 
     logging.info("closing input file")
     input_file.close()
