@@ -126,15 +126,9 @@ class DCCNET:
             sync1 = window[:sync_length]
             sync2 = window[sync_length : sync_length * 2]
 
-            # print("\n[SYNCHRONIZING] Reading sync prefix")
-            # print(f"sync1: {sync1.hex()}, sync2: {sync2.hex()}")
-
             if sync1 == sync_pattern and sync2 == sync_pattern:
-                # print("[SYNCHRONIZING] Valid sync\n")
                 break
             else:
-                # print("sync diff")
-
                 # Deslizar a janela para a esquerda em 1 byte
                 window.pop(0)
 
@@ -149,12 +143,6 @@ class DCCNET:
         id = struct.unpack("!H", conn.recv(2))[0]
         flags = struct.unpack("!B", conn.recv(1))[0]
         data = conn.recv(length)
-
-        # print("[RECEIVED] packet content:")
-        # print("checksum:", hex(checksum))
-        # print("length:", length)
-        # print("id:", id)
-        # print("flags:", hex(flags), end="\n\n")
 
         return {
             "id": id,
