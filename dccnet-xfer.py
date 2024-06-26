@@ -1,6 +1,8 @@
+from multiprocessing import Process
 import logging
 import socket
 import sys
+import os
 
 from protocol import DCCNET
 
@@ -16,6 +18,8 @@ def setup_server(host: str, port: int, input: str, output: str) -> None:
 
     input_file = open(input, "rb")
     output_file = open(output, "wb")
+    #if os.path.getsize(input) > MAX_DATA_LENGTH:
+    #    print(f"Max input file size is 4096 bytes. Server input file '{input}' have {os.path.getsize(input)}.")
 
     all_data_received = False
     all_data_sent = False
@@ -41,8 +45,10 @@ def setup_server(host: str, port: int, input: str, output: str) -> None:
             except socket.timeout:
                 continue
 
-            last_id = recv["id"]
-            last_chksum = recv["checksum"]
+            # Se o id e o checksum forem identicos ou do quadro anterior, ignora o quadro 
+            if (recv.get('id') == last_id and recv.get('checksum') == last_chksum):
+                logging.info("frame discarded. Getting another frame...") 
+                continue
 
             logging.info("data frame, writing data")
             output_file.write(recv["data"])
@@ -78,6 +84,11 @@ def setup_server(host: str, port: int, input: str, output: str) -> None:
                     except socket.timeout:
                         continue
 
+                     # Se o id e o checksum forem identicos ou do quadro anterior, ignora o quadro 
+                    if (recv.get('id') == last_id and recv.get('checksum') == last_chksum):
+                        logging.info("frame discarded. Getting another frame...") 
+                        continue
+
                     if dccnet.is_ack_frame(recv["flags"]) and recv["id"] == send_id:
                         logging.info("ACK frame")
                         send_id = (send_id + 1) % 2
@@ -100,6 +111,8 @@ def setup_client(ip: str, port: int, input: str, output: str) -> None:
 
     input_file = open(input, "rb")
     output_file = open(output, "wb")
+    #if os.path.getsize(input) > MAX_DATA_LENGTH:
+    #    print(f"Max input file size is 4096 bytes. Client input file '{input}' have {os.path.getsize(input)}.")
 
     all_data_received = False
     all_data_sent = False
@@ -131,6 +144,12 @@ def setup_client(ip: str, port: int, input: str, output: str) -> None:
                 try:
                     recv = dccnet.receive_frame(s)
                     logging.info(f"frame received: {recv}")
+                    
+                    # Se o id e o checksum forem identicos ou do quadro anterior, ignora o quadro 
+                    if (recv.get('id') == last_id and recv.get('checksum') == last_chksum):
+                        logging.info("frame discarded. Getting another frame...") 
+                        continue
+
                 except socket.timeout:
                     continue
 
@@ -151,6 +170,12 @@ def setup_client(ip: str, port: int, input: str, output: str) -> None:
             try:
                 recv = dccnet.receive_frame(s)
                 logging.info(f"frame received: {recv}")
+
+                # Se o id e o checksum forem identicos ou do quadro anterior, ignora o quadro 
+                if (recv.get('id') == last_id and recv.get('checksum') == last_chksum):
+                    logging.info("frame discarded. Getting another frame...") 
+                    continue
+
             except socket.timeout:
                 continue
 
