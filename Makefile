@@ -1,9 +1,21 @@
 HOST=127.0.1.1
 PORT=6546
-SERVER_INPUT="lenna.png"
-SERVER_OUTPUT="tamborzao-corki-received.mp3"
-CLIENT_INPUT="tamborzao-corki.mp3"
-CLIENT_OUTPUT="lenna-received.png"
+SERVER_INPUT="server-input.txt"
+SERVER_OUTPUT="server-output.txt"
+CLIENT_INPUT="client-input.txt"
+CLIENT_OUTPUT="client-output.txt"
+
+server-send-lenna:
+	python3 dccnet-xfer.py -s ${PORT} "lenna.png" "server-received-corki.mp3"
+	
+client-send-corki:
+	python3 dccnet-xfer.py -c ${HOST}:${PORT} "tamborzao-corki.mp3" "client-received-lenna.png"
+
+server-send-corki:
+	python3 dccnet-xfer.py -s ${PORT} "tamborzao-corki.mp3" "server-received-lenna.png"
+	
+client-send-lenna:
+	python3 dccnet-xfer.py -c ${HOST}:${PORT} "lenna.png" "client-received-corki.mp3"
 
 server:
 	python3 dccnet-xfer.py -s ${PORT} ${SERVER_INPUT} ${SERVER_OUTPUT}

@@ -5,16 +5,17 @@ import sys
 from protocol import DCCNET
 
 MAX_DATA_LENGTH = 4096
+# MAX_DATA_LENGTH = 2
 dccnet = DCCNET()
 
 
-def setup_server(port: int, input: str, output: str) -> None:
+def setup_server(port: int, input_path: str, output_path: str) -> None:
     send_id = 0
     last_id = 1
     last_chksum = -1
 
-    input_file = open(input, "rb")
-    output_file = open(output, "wb")
+    input_file = open(input_path, "rb")
+    output_file = open(output_path, "wb")
 
     all_data_received = False
     all_data_sent = False
@@ -34,7 +35,7 @@ def setup_server(port: int, input: str, output: str) -> None:
     s.listen()
 
     conn, addr = s.accept()
-    conn.settimeout(1)
+    s.settimeout(1)
     logging.info(f"connected with {addr}")
 
     while (not all_data_sent) or (not all_data_received):
@@ -42,39 +43,49 @@ def setup_server(port: int, input: str, output: str) -> None:
             try:
                 recv = dccnet.receive_frame(conn)
                 logging.info(f"frame received: {recv}")
+
+                if not dccnet.is_acceptable_frame(
+                    recv["checksum"],
+                    recv["length"],
+                    recv["id"],
+                    recv["flags"],
+                    recv["data"],
+                ):
+                    logging.info("not acceptable packet, discarting")
+                    pass
+                elif dccnet.is_reset_frame(recv["flags"]):
+                    # reset frame
+                    logging.info("received an RESET frame")
+                    logging.info(f"content: {recv['data'].decode()}")
+                    logging.info("terminating...")
+                    sys.exit(1)
+                elif dccnet.is_ack_frame(recv["flags"]):
+                    logging.info("duplicate ack, continuing...")
+                    pass
+                else:
+                    if recv["id"] == last_id and recv["checksum"] == last_chksum:
+                        # quadro repetido
+                        logging.info("duplicate, resending ack")
+                        ack, _ = dccnet.encode_ack(last_id)
+                        dccnet.send_frame(conn, ack)
+                    else:
+                        # quadro de dados
+                        last_id = recv["id"]
+                        last_chksum = recv["checksum"]
+
+                        logging.info("data frame, writing data")
+                        output_file.write(recv["data"])
+
+                        if dccnet.is_end_frame(recv["flags"]):
+                            all_data_received = True
+                            output_file.close()
+                            logging.info("frame with END flag received")
+
+                        logging.info("sending ACK")
+                        ack, _ = dccnet.encode_ack(recv["id"])
+                        dccnet.send_frame(conn, ack)
             except socket.timeout:
-                continue
-
-            if not dccnet.is_acceptable_frame(
-                recv["checksum"],
-                recv["length"],
-                recv["id"],
-                recv["flags"],
-                recv["data"],
-            ):
-                continue
-
-            # quadro duplicado, reenviando o ACK
-            if recv["id"] == last_id and recv["checksum"] == last_chksum:
-                logging.info("duplicate, resending ack")
-                ack, _ = dccnet.encode_ack(last_id)
-                dccnet.send_frame(conn, ack)
-                continue
-                # continuar mesmo ou ir pro envio logo depois?
-
-            last_id = recv["id"]
-            last_chksum = recv["checksum"]
-
-            logging.info("data frame, writing data")
-            output_file.write(recv["data"])
-            if dccnet.is_end_frame(recv["flags"]):
-                all_data_received = True
-                output_file.close()
-                logging.info("frame with END flag received")
-
-            logging.info("sending ACK")
-            ack, _ = dccnet.encode_ack(recv["id"])
-            dccnet.send_frame(conn, ack)
+                pass
 
         if not all_data_sent:
             if payload == b"":
@@ -93,6 +104,7 @@ def setup_server(port: int, input: str, output: str) -> None:
                 while not ack_received:
                     dccnet.send_frame(conn, frame)
                     logging.info(f"frame sent: {frame}")
+
                     try:
                         recv = dccnet.receive_frame(conn)
                         logging.info(f"frame received: {recv}")
@@ -108,12 +120,20 @@ def setup_server(port: int, input: str, output: str) -> None:
                     ):
                         continue
 
-                    if dccnet.is_ack_frame(recv["flags"]) and recv["id"] == send_id:
-                        logging.info("ACK frame")
-                        send_id = (send_id + 1) % 2
-                        payload = next_payload
-                        next_payload = input_file.read(MAX_DATA_LENGTH)
-                        ack_received = True
+                    if dccnet.is_ack_frame(recv["flags"]) and send_id == recv["id"]:
+                        if recv["id"] == send_id:
+                            logging.info("ACK frame")
+                            send_id = (send_id + 1) % 2
+                            payload = next_payload
+                            next_payload = input_file.read(MAX_DATA_LENGTH)
+                            ack_received = True
+                        elif recv["id"] == last_id:
+                            continue
+                    elif dccnet.is_reset_frame(recv["flags"]):
+                        logging.info("received an RESET frame")
+                        logging.info(f"content: {recv['data'].decode()}")
+                        logging.info("terminating...")
+                        sys.exit(1)
 
     logging.info("closing input file")
     input_file.close()
@@ -123,13 +143,13 @@ def setup_server(port: int, input: str, output: str) -> None:
     s.close()
 
 
-def setup_client(ip: str, port: int, input: str, output: str) -> None:
+def setup_client(ip: str, port: int, input_path: str, output_path: str) -> None:
     send_id = 0
     last_id = 1
     last_chksum = -1
 
-    input_file = open(input, "rb")
-    output_file = open(output, "wb")
+    input_file = open(input_path, "rb")
+    output_file = open(output_path, "wb")
 
     all_data_received = False
     all_data_sent = False
@@ -143,6 +163,54 @@ def setup_client(ip: str, port: int, input: str, output: str) -> None:
     s.settimeout(1)
 
     while (not all_data_sent) or (not all_data_received):
+        if not all_data_received:
+            try:
+                recv = dccnet.receive_frame(s)
+                logging.info(f"frame received: {recv}")
+
+                if not dccnet.is_acceptable_frame(
+                    recv["checksum"],
+                    recv["length"],
+                    recv["id"],
+                    recv["flags"],
+                    recv["data"],
+                ):
+                    logging.info("not acceptable packet, discarting")
+                    pass
+                elif dccnet.is_reset_frame(recv["flags"]):
+                    # reset frame
+                    logging.info("received an RESET frame")
+                    logging.info(f"content: {recv['data'].decode()}")
+                    logging.info("terminating...")
+                    sys.exit(1)
+                elif dccnet.is_ack_frame(recv["flags"]):
+                    logging.info("duplicate ack, continuing...")
+                    pass
+                else:
+                    if recv["id"] == last_id and recv["checksum"] == last_chksum:
+                        # quadro repetido
+                        logging.info("duplicate, resending ack")
+                        ack, _ = dccnet.encode_ack(last_id)
+                        dccnet.send_frame(s, ack)
+                    else:
+                        # quadro de dados
+                        last_id = recv["id"]
+                        last_chksum = recv["checksum"]
+
+                        logging.info("data frame, writing data")
+                        output_file.write(recv["data"])
+
+                        if dccnet.is_end_frame(recv["flags"]):
+                            all_data_received = True
+                            output_file.close()
+                            logging.info("frame with END flag received")
+
+                        logging.info("sending ACK")
+                        ack, _ = dccnet.encode_ack(recv["id"])
+                        dccnet.send_frame(s, ack)
+            except socket.timeout:
+                pass
+
         if not all_data_sent:
             if payload == b"":
                 if not all_data_sent:
@@ -155,66 +223,41 @@ def setup_client(ip: str, port: int, input: str, output: str) -> None:
                     logging.info("last frame is about to be sent")
 
                 frame, _ = dccnet.encode(payload, send_id, flags)
-                dccnet.send_frame(s, frame)
-                logging.info(f"frame sent: {frame}")
 
-                try:
-                    recv = dccnet.receive_frame(s)
-                    logging.info(f"frame received: {recv}")
+                ack_received = False
+                while not ack_received:
+                    dccnet.send_frame(s, frame)
+                    logging.info(f"frame sent: {frame}")
 
-                    # Se o id e o checksum forem identicos ou do quadro anterior, ignora o quadro
-                    if (
-                        recv.get("id") == last_id
-                        and recv.get("checksum") == last_chksum
-                    ):
-                        logging.info("frame discarded. Getting another frame...")
+                    try:
+                        recv = dccnet.receive_frame(s)
+                        logging.info(f"frame received: {recv}")
+                    except socket.timeout:
                         continue
 
-                except socket.timeout:
-                    continue
+                    if not dccnet.is_acceptable_frame(
+                        recv["checksum"],
+                        recv["length"],
+                        recv["id"],
+                        recv["flags"],
+                        recv["data"],
+                    ):
+                        continue
 
-                if dccnet.is_ack_frame(recv["flags"]) and recv["id"] == send_id:
-                    logging.info("ACK frame")
-                    send_id = (send_id + 1) % 2
-                    payload = next_payload
-                    next_payload = input_file.read(MAX_DATA_LENGTH)
-                else:
-                    continue
-
-        if all_data_received:
-            continue
-
-        # escutar dados
-        data_received = False
-        while not data_received:
-            try:
-                recv = dccnet.receive_frame(s)
-                logging.info(f"frame received: {recv}")
-
-                # Se o id e o checksum forem identicos ou do quadro anterior, ignora o quadro
-                if recv.get("id") == last_id and recv.get("checksum") == last_chksum:
-                    logging.info("frame discarded. Getting another frame...")
-                    continue
-
-            except socket.timeout:
-                continue
-
-            if not dccnet.is_ack_frame(recv["flags"]):
-                data_received = True
-
-        logging.info("data frame, writing data")
-        output_file.write(recv["data"])
-        if dccnet.is_end_frame(recv["flags"]):
-            all_data_received = True
-            output_file.close()
-            logging.info("frame with END flag received")
-
-        last_id = recv["id"]
-        last_chksum = recv["checksum"]
-
-        logging.info("sending ACK")
-        ack, _ = dccnet.encode_ack(recv["id"])
-        dccnet.send_frame(s, ack)
+                    if dccnet.is_ack_frame(recv["flags"]) and send_id == recv["id"]:
+                        if recv["id"] == send_id:
+                            logging.info("ACK frame")
+                            send_id = (send_id + 1) % 2
+                            payload = next_payload
+                            next_payload = input_file.read(MAX_DATA_LENGTH)
+                            ack_received = True
+                        elif recv["id"] == last_id:
+                            continue
+                    elif dccnet.is_reset_frame(recv["flags"]):
+                        logging.info("received an RESET frame")
+                        logging.info(f"content: {recv['data'].decode()}")
+                        logging.info("terminating...")
+                        sys.exit(1)
 
     logging.info("closing input file")
     input_file.close()

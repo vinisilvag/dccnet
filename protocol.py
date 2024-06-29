@@ -10,7 +10,6 @@ class DCCNET:
     def resolve_connection(self, host, port):
         try:
             addr_info = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-            print(addr_info)
             for family, _, _, _, sockaddr in addr_info:
                 ip_address = sockaddr[0]
                 if family == socket.AF_INET6:
@@ -107,6 +106,10 @@ class DCCNET:
 
     def encode_ack(self, id: int):
         frame, chksum = self.encode("".encode(), id, 0x80)
+        return frame, chksum
+
+    def encode_reset(self, message):
+        frame, chksum = self.encode(message.encode(), 0xFFFF, 0x20)
         return frame, chksum
 
     def send_frame(self, conn, frame):

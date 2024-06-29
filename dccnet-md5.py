@@ -42,9 +42,10 @@ def communicate(conn, gas):
             send_id = (send_id + 1) % 2
         if dccnet.is_reset_frame(recv["flags"]):
             logging.info("received an RESET frame during authentication")
-            logging.info("content:", recv["data"].decode())
+            logging.info(f"content: {recv['data'].decode()}")
             logging.info("terminating...")
-            sys.exit(1)
+            conn.close()
+            return
 
     logging.info("authenticated, now sending hashs")
 
@@ -63,9 +64,10 @@ def communicate(conn, gas):
 
         if dccnet.is_reset_frame(recv["flags"]):
             logging.info("received an RESET frame")
-            logging.info("content:", recv["data"].decode())
+            logging.info(f"content: {recv['data'].decode()}")
             logging.info("terminating...")
-            sys.exit(1)
+            conn.close()
+            return
 
         # quadro duplicado, reenviando o ACK
         if recv["id"] == last_id and recv["checksum"] == last_chksum:
@@ -137,9 +139,12 @@ def communicate(conn, gas):
                     send_id = (send_id + 1) % 2
                 elif dccnet.is_reset_frame(recv["flags"]):
                     logging.info("received an RESET frame")
-                    logging.info("content:", recv["data"].decode())
+                    logging.info(f"content: {recv['data'].decode()}")
                     logging.info("terminating...")
-                    sys.exit(1)
+                    conn.close()
+                    return
+
+    conn.close()
 
 
 def main():
@@ -168,8 +173,6 @@ def main():
     logging.info(f"connected with server {connection}")
 
     communicate(conn, gas)
-
-    conn.close()
 
 
 if __name__ == "__main__":
