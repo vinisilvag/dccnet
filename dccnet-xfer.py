@@ -1,25 +1,20 @@
-from multiprocessing import Process
 import logging
 import socket
 import sys
-import os
 
 from protocol import DCCNET
 
-# MAX_DATA_LENGTH = 4096
 MAX_DATA_LENGTH = 4096
 dccnet = DCCNET()
 
 
-def setup_server(host: str, port: int, input: str, output: str) -> None:
+def setup_server(port: int, input: str, output: str) -> None:
     send_id = 0
     last_id = 1
     last_chksum = -1
 
     input_file = open(input, "rb")
     output_file = open(output, "wb")
-    #if os.path.getsize(input) > MAX_DATA_LENGTH:
-    #    print(f"Max input file size is 4096 bytes. Server input file '{input}' have {os.path.getsize(input)}.")
 
     all_data_received = False
     all_data_sent = False
@@ -27,11 +22,16 @@ def setup_server(host: str, port: int, input: str, output: str) -> None:
     payload = input_file.read(MAX_DATA_LENGTH)
     next_payload = input_file.read(MAX_DATA_LENGTH)
 
-    connection = (host, port)
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(connection)
+    if socket.has_dualstack_ipv6():
+        s = socket.create_server(
+            ("", port), backlog=1, family=socket.AF_INET6, dualstack_ipv6=True
+        )
+    else:
+        s = socket.create_server(("", port), backlog=1)
+
+    socket_info = s.getsockname()
+    logging.info(f"server listening on ({socket_info[0]}):({socket_info[1]})")
     s.listen()
-    logging.info(f"server listening on {host}:{port}")
 
     conn, addr = s.accept()
     conn.settimeout(1)
@@ -45,10 +45,25 @@ def setup_server(host: str, port: int, input: str, output: str) -> None:
             except socket.timeout:
                 continue
 
-            # Se o id e o checksum forem identicos ou do quadro anterior, ignora o quadro 
-            if (recv.get('id') == last_id and recv.get('checksum') == last_chksum):
-                logging.info("frame discarded. Getting another frame...") 
+            if not dccnet.is_acceptable_frame(
+                recv["checksum"],
+                recv["length"],
+                recv["id"],
+                recv["flags"],
+                recv["data"],
+            ):
                 continue
+
+            # quadro duplicado, reenviando o ACK
+            if recv["id"] == last_id and recv["checksum"] == last_chksum:
+                logging.info("duplicate, resending ack")
+                ack, _ = dccnet.encode_ack(last_id)
+                dccnet.send_frame(conn, ack)
+                continue
+                # continuar mesmo ou ir pro envio logo depois?
+
+            last_id = recv["id"]
+            last_chksum = recv["checksum"]
 
             logging.info("data frame, writing data")
             output_file.write(recv["data"])
@@ -84,9 +99,13 @@ def setup_server(host: str, port: int, input: str, output: str) -> None:
                     except socket.timeout:
                         continue
 
-                     # Se o id e o checksum forem identicos ou do quadro anterior, ignora o quadro 
-                    if (recv.get('id') == last_id and recv.get('checksum') == last_chksum):
-                        logging.info("frame discarded. Getting another frame...") 
+                    if not dccnet.is_acceptable_frame(
+                        recv["checksum"],
+                        recv["length"],
+                        recv["id"],
+                        recv["flags"],
+                        recv["data"],
+                    ):
                         continue
 
                     if dccnet.is_ack_frame(recv["flags"]) and recv["id"] == send_id:
@@ -111,8 +130,6 @@ def setup_client(ip: str, port: int, input: str, output: str) -> None:
 
     input_file = open(input, "rb")
     output_file = open(output, "wb")
-    #if os.path.getsize(input) > MAX_DATA_LENGTH:
-    #    print(f"Max input file size is 4096 bytes. Client input file '{input}' have {os.path.getsize(input)}.")
 
     all_data_received = False
     all_data_sent = False
@@ -144,10 +161,13 @@ def setup_client(ip: str, port: int, input: str, output: str) -> None:
                 try:
                     recv = dccnet.receive_frame(s)
                     logging.info(f"frame received: {recv}")
-                    
-                    # Se o id e o checksum forem identicos ou do quadro anterior, ignora o quadro 
-                    if (recv.get('id') == last_id and recv.get('checksum') == last_chksum):
-                        logging.info("frame discarded. Getting another frame...") 
+
+                    # Se o id e o checksum forem identicos ou do quadro anterior, ignora o quadro
+                    if (
+                        recv.get("id") == last_id
+                        and recv.get("checksum") == last_chksum
+                    ):
+                        logging.info("frame discarded. Getting another frame...")
                         continue
 
                 except socket.timeout:
@@ -171,9 +191,9 @@ def setup_client(ip: str, port: int, input: str, output: str) -> None:
                 recv = dccnet.receive_frame(s)
                 logging.info(f"frame received: {recv}")
 
-                # Se o id e o checksum forem identicos ou do quadro anterior, ignora o quadro 
-                if (recv.get('id') == last_id and recv.get('checksum') == last_chksum):
-                    logging.info("frame discarded. Getting another frame...") 
+                # Se o id e o checksum forem identicos ou do quadro anterior, ignora o quadro
+                if recv.get("id") == last_id and recv.get("checksum") == last_chksum:
+                    logging.info("frame discarded. Getting another frame...")
                     continue
 
             except socket.timeout:
@@ -226,11 +246,10 @@ def main():
             output = sys.argv[4]
             setup_client(ip, port, input, output)
         case "-s":
-            host = socket.gethostbyname(socket.getfqdn())
             port = int(sys.argv[2])
             input = sys.argv[3]
             output = sys.argv[4]
-            setup_server(host, port, input, output)
+            setup_server(port, input, output)
         case _:
             print("Invalid flag.\nFlags currently available are: -s and -c")
             sys.exit(1)

@@ -10,6 +10,7 @@ class DCCNET:
     def resolve_connection(self, host, port):
         try:
             addr_info = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            print(addr_info)
             for family, _, _, _, sockaddr in addr_info:
                 ip_address = sockaddr[0]
                 if family == socket.AF_INET6:
@@ -74,6 +75,14 @@ class DCCNET:
 
     def checksum_match(self, checksum_calc, checksum_recv):
         return checksum_calc == checksum_recv
+
+    def is_acceptable_frame(
+        self, chksum_recv, length_recv, id_recv, flags_recv, data_recv
+    ):
+        frame, chksum_calc = self.reconstruct_frame(
+            length_recv, id_recv, flags_recv, data_recv
+        )
+        return self.checksum_match(chksum_calc, chksum_recv)
 
     def encode(self, data: bytes, id: int, flags: int):
         frame = struct.pack(

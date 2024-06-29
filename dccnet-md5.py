@@ -31,13 +31,20 @@ def communicate(conn, gas):
         except socket.timeout:
             continue
 
-        last_id = recv["id"]
-        last_chksum = recv["checksum"]
+        if not dccnet.is_acceptable_frame(
+            recv["checksum"], recv["length"], recv["id"], recv["flags"], recv["data"]
+        ):
+            continue
 
-        if dccnet.is_ack_frame(recv["flags"]):
+        if dccnet.is_ack_frame(recv["flags"]) and send_id == recv["id"]:
             logging.info("ACK for authentication received")
             authenticated = True
             send_id = (send_id + 1) % 2
+        if dccnet.is_reset_frame(recv["flags"]):
+            logging.info("received an RESET frame during authentication")
+            logging.info("content:", recv["data"].decode())
+            logging.info("terminating...")
+            sys.exit(1)
 
     logging.info("authenticated, now sending hashs")
 
@@ -49,6 +56,11 @@ def communicate(conn, gas):
         except socket.timeout:
             continue
 
+        if not dccnet.is_acceptable_frame(
+            recv["checksum"], recv["length"], recv["id"], recv["flags"], recv["data"]
+        ):
+            continue
+
         if dccnet.is_reset_frame(recv["flags"]):
             logging.info("received an RESET frame")
             logging.info("content:", recv["data"].decode())
@@ -57,18 +69,19 @@ def communicate(conn, gas):
 
         # quadro duplicado, reenviando o ACK
         if recv["id"] == last_id and recv["checksum"] == last_chksum:
+            logging.info("duplicate, resending ack")
             ack, _ = dccnet.encode_ack(last_id)
             dccnet.send_frame(conn, ack)
             continue
+
+        last_id = recv["id"]
+        last_chksum = recv["checksum"]
 
         # confirma o frame de dados
         logging.info("data frame, sending ack")
         ack, _ = dccnet.encode_ack(recv["id"])
         dccnet.send_frame(conn, ack)
         logging.info(f"ACK sent: {ack}")
-
-        last_id = recv["id"]
-        last_chksum = recv["checksum"]
 
         # END flag setada, finaliza o recebimento/envio de dados
         if dccnet.is_end_frame(recv["flags"]):
@@ -77,6 +90,7 @@ def communicate(conn, gas):
             continue
 
         message = recv["data"].decode()
+        to_send = []
         # mensagem incompleta
         if message[-1] != "\n":
             acc += message
@@ -84,59 +98,48 @@ def communicate(conn, gas):
             # o fim de uma mensagem começada acabou de ser recebido
             if acc != "":
                 acc += message[0:-1]
-                hash = hashlib.md5(acc.encode())
-                frame, _ = dccnet.encode(
-                    (hash.hexdigest() + "\n").encode(), send_id, 0x00
-                )
+                to_send.append(acc)
                 acc = ""
 
-                ack_received = False
-                while not ack_received:
-                    dccnet.send_frame(conn, frame)
-                    logging.info(f"frame sent: {frame}")
-                    try:
-                        recv = dccnet.receive_frame(conn)
-                        logging.info(f"frame received: {recv}")
-                    except socket.timeout:
-                        continue
-
-                    if dccnet.is_ack_frame(recv["flags"]):
-                        ack_received = True
-                        send_id = (send_id + 1) % 2
-                    elif dccnet.is_reset_frame(recv["flags"]):
-                        logging.info("received an RESET frame")
-                        logging.info("content:", recv["data"].decode())
-                        logging.info("terminating...")
-                        sys.exit(1)
             else:
                 # mensagem comum recebida
                 # itera pelas possíveis mensagens, envia e aguarda
                 # confirmação de cada uma delas
                 for m in message.split("\n"):
                     if m != "":
-                        hash = hashlib.md5(m.encode())
-                        frame, _ = dccnet.encode(
-                            (hash.hexdigest() + "\n").encode(), send_id, 0x00
-                        )
+                        to_send.append(m)
 
-                        ack_received = False
-                        while not ack_received:
-                            dccnet.send_frame(conn, frame)
-                            logging.info(f"frame sent: {frame}")
-                            try:
-                                recv = dccnet.receive_frame(conn)
-                                logging.info(f"frame received: {recv}")
-                            except socket.timeout:
-                                continue
+        for message in to_send:
+            hash = hashlib.md5(message.encode())
+            frame, _ = dccnet.encode((hash.hexdigest() + "\n").encode(), send_id, 0x00)
 
-                            if dccnet.is_ack_frame(recv["flags"]):
-                                ack_received = True
-                                send_id = (send_id + 1) % 2
-                            elif dccnet.is_reset_frame(recv["flags"]):
-                                logging.info("received an RESET frame")
-                                logging.info("content:", recv["data"].decode())
-                                logging.info("terminating...")
-                                sys.exit(1)
+            ack_received = False
+            while not ack_received:
+                dccnet.send_frame(conn, frame)
+                logging.info(f"frame sent: {frame}")
+                try:
+                    recv = dccnet.receive_frame(conn)
+                    logging.info(f"frame received: {recv}")
+                except socket.timeout:
+                    continue
+
+                if not dccnet.is_acceptable_frame(
+                    recv["checksum"],
+                    recv["length"],
+                    recv["id"],
+                    recv["flags"],
+                    recv["data"],
+                ):
+                    continue
+
+                if dccnet.is_ack_frame(recv["flags"]) and send_id == recv["id"]:
+                    ack_received = True
+                    send_id = (send_id + 1) % 2
+                elif dccnet.is_reset_frame(recv["flags"]):
+                    logging.info("received an RESET frame")
+                    logging.info("content:", recv["data"].decode())
+                    logging.info("terminating...")
+                    sys.exit(1)
 
 
 def main():
