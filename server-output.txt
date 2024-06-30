@@ -1,1 +1,1 @@
-cliente mandando mensagem para o servidor
+msg pequena demais

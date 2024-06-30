@@ -134,6 +134,28 @@ def setup_server(port: int, input_path: str, output_path: str) -> None:
                         logging.info(f"content: {recv['data'].decode()}")
                         logging.info("terminating...")
                         sys.exit(1)
+                    else:
+                        if recv["id"] == last_id and recv["checksum"] == last_chksum:
+                            # quadro repetido
+                            logging.info("duplicate, resending ack")
+                            ack, _ = dccnet.encode_ack(last_id)
+                            dccnet.send_frame(conn, ack)
+                        else:
+                            # quadro de dados
+                            last_id = recv["id"]
+                            last_chksum = recv["checksum"]
+
+                            logging.info("data frame, writing data")
+                            output_file.write(recv["data"])
+
+                            if dccnet.is_end_frame(recv["flags"]):
+                                all_data_received = True
+                                output_file.close()
+                                logging.info("frame with END flag received")
+
+                            logging.info("sending ACK")
+                            ack, _ = dccnet.encode_ack(recv["id"])
+                            dccnet.send_frame(conn, ack)
 
     logging.info("closing input file")
     input_file.close()
@@ -258,6 +280,28 @@ def setup_client(ip: str, port: int, input_path: str, output_path: str) -> None:
                         logging.info(f"content: {recv['data'].decode()}")
                         logging.info("terminating...")
                         sys.exit(1)
+                    else:
+                        if recv["id"] == last_id and recv["checksum"] == last_chksum:
+                            # quadro repetido
+                            logging.info("duplicate, resending ack")
+                            ack, _ = dccnet.encode_ack(last_id)
+                            dccnet.send_frame(s, ack)
+                        else:
+                            # quadro de dados
+                            last_id = recv["id"]
+                            last_chksum = recv["checksum"]
+
+                            logging.info("data frame, writing data")
+                            output_file.write(recv["data"])
+
+                            if dccnet.is_end_frame(recv["flags"]):
+                                all_data_received = True
+                                output_file.close()
+                                logging.info("frame with END flag received")
+
+                            logging.info("sending ACK")
+                            ack, _ = dccnet.encode_ack(recv["id"])
+                            dccnet.send_frame(s, ack)
 
     logging.info("closing input file")
     input_file.close()
